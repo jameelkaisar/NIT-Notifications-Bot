@@ -1,102 +1,140 @@
-from urllib.request import Request, urlopen
-from urllib.parse import quote
+from urllib.request import Request, urlopen, HTTPError
+from urllib.parse import quote, urljoin
 from bs4 import BeautifulSoup
 from pymongo import MongoClient
 from time import sleep
-
 from os import environ
 
 
 
-def get_source(url):
-  try:
-    with urlopen(Request(url, headers = { 'User-Agent' : 'Mozilla/5.0 (Windows NT 6.1; Win64; x64)' })) as response:
+class Notifications():
+  def __init__(self, nlink, mongo, dbname, colname, token, ids, admin):
+    self.NLINK = nlink
+    self.MONGO = mongo
+    self.DBNAME = dbname
+    self.COLNAME = colname
+    self.TOKEN = token
+    self.IDS = ids.split(',')
+    self.ADMIN = admin
+
+    self.client = MongoClient(self.MONGO)
+    self.col = self.get_db()
+
+  def get_soup(self):
+    with urlopen(Request(self.NLINK, headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; Win64; x64)'})) as response:
         source = response.read()
-    return source
-  except:
-    return None
+    return BeautifulSoup(source, 'html.parser')
+  
+  def get_db(self):
+    db = self.client[self.DBNAME]
+    col = db[self.COLNAME]
+    return col
+  
+  def get_notifs(self):
+    notifications = []
+    soup = self.get_soup()
+    rows = soup.find('table', {'id': 'customers'}).find_all('tr')[1:]
+    rows = filter(lambda x: x.find('a') != None, rows)
 
+    for row in rows:
+      date = row.find_all('td')[-1].getText().strip()
+      if date == "":
+        date = None
+      title = row.find_all('td')[0].getText().strip().replace(u'\xa0', ' ')
+      links = row.find_all('a')
+      links = list(filter(lambda x: x.getText().strip() != "", links))
+      if (title != "" and len(links) != 0):
+        link = links[0].get('href').strip()
+        link = urljoin(NLINK, link)
+        notifications.append((date, title, link))
 
-def get_file(url, path):
-  try:
-    urlretrieve(url, path)
-    return True
-  except:
-    return False
+    return notifications
 
+  def init_db(self, notifs):
+    old_notifs = set([(notif['date'], notif['title'], notif['link']) for notif in self.col.find({}, {'_id': 0, 'date': 1, 'title': 1, 'link': 1})])
+    for notif in reversed(notifs):
+      if notif not in old_notifs:
+        self.col.insert_one({'date': notif[0], 'title': notif[1], 'link': notif[2]})
+  
+  def check_notifs(self, notifs):
+    new_notifs = []
+    old_notifs = set([(notif['date'], notif['title'], notif['link']) for notif in self.col.find({}, {'_id': 0, 'date': 1, 'title': 1, 'link': 1})])
+    for notif in reversed(notifs):
+      if notif not in old_notifs:
+        new_notifs.append(notif)
+        self.col.insert_one({'date': notif[0], 'title': notif[1], 'link': notif[2]})
+    return new_notifs
+  
+  def send_notifs(self, notifs):
+    for notif in notifs:
+      title = notif[1].replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+      caption = "<b>" + title + "</b>"
+      caption += "\n\nLink: " + notif[2]
+      if notif[0]:
+        caption += "\n\nDate: " + notif[0]
+      pdf_flag = False
+      if self.is_valid(notif[2]) and self.is_pdf(notif[2]):
+        pdf_flag = True
 
-def get_db(client):
-  db = client['NIT_Notifications']
-  col = db['Notifications']
-  return col
-
-
-def init_db(col, notifications):
-  col.insert_one({'_id': 0, 'total': 0})
-  total = col.find_one({'_id': 0}, {'_id': 0, 'total': 1})['total']
-  for title, date, link in reversed(notifications):
-    total = col.find_one({'_id': 0}, {'_id': 0, 'total': 1})['total']
-    col.insert_one({'_id': total+1, 'title': title, 'date': date, 'link': link})
-    col.update_one({'_id': 0}, {'$set': {'total':  total+1}})
-
-
-def check_db(col, notifications):
-  new_notif = []
-  old_notif = [notif['link'] for notif in col.find({}, {'_id': 0, 'link': 1}).sort('_id')[1:]]
-  for title, date, link in reversed(notifications):
-    if link in old_notif:
-      continue
-    else:
-      new_notif.append((title, date, link, ))
-      total = col.find_one({'_id': 0}, {'_id': 0, 'total': 1})['total']
-      col.insert_one({'_id': total+1, 'title': title, 'date': date, 'link': link})
-      col.update_one({'_id': 0}, {'$set': {'total':  total+1}})
-  return new_notif
-
-
-def send_notif(new_notif):
-  for title, date, link in new_notif:
-    title = title.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-    caption = "<b>" + title + "</b>\nDate: " + date
-    for id in IDS:
-      url = f"https://api.telegram.org/bot{TOKEN}/sendDocument?chat_id={quote(id)}&document={quote(link)}&caption={quote(caption)}&parse_mode={quote('HTML')}"
-      try:
-        urlopen(Request(url))
-      except Exception as err:
+      for id in self.IDS:
+        if pdf_flag:
+          url = f"https://api.telegram.org/bot{self.TOKEN}/sendDocument?chat_id={quote(id)}&document={quote(notif[2])}&caption={quote(caption)}&parse_mode={quote('HTML')}"
+        else:
+          url = f"https://api.telegram.org/bot{self.TOKEN}/sendMessage?chat_id={quote(id)}&text={quote(caption)}&parse_mode={quote('HTML')}"
         try:
-          text = type(err).__name__ + ":" + err + "\nURL: " + url
-          print(text)
-          urlopen(Request(f"https://api.telegram.org/bot{TOKEN}/sendMessage?chat_id={quote(ADMIN)}&text={quote(text)}"))
-        except:
-          pass
-  print("Notification(s) Sent!")
+          urlopen(Request(url))
+        except Exception as err:
+          try:
+            text = type(err).__name__ + ":" + str(err)
+            text += "\n\nTitle: " + title
+            text += "\n\nLink: " + notif[2]
+            print(text)
+            urlopen(Request(f"https://api.telegram.org/bot{self.TOKEN}/sendMessage?chat_id={quote(self.ADMIN)}&text={quote(text)}"))
+          except:
+            pass
+
+    print("Notification(s) Sent!")
+  
+  def is_valid(self, url):
+    r = Request(url)
+    r.get_method = lambda: 'HEAD'
+    try:
+        urlopen(r)
+        return True
+    except HTTPError:
+        return False
+
+  def is_pdf(self, url):
+    r = urlopen(url)
+    return r.getheader('Content-Type') == 'application/pdf'  
+
+  def poll(self, delay=600):
+    # notifs = self.get_notifs()
+    # self.init_db(notifs)
+
+    while True:
+      notifs = self.get_notifs()
+      new_notifs = self.check_notifs(notifs)
+
+      if len(new_notifs) > 0:
+        print("New Notification(s) Received!")
+        self.send_notifs(new_notifs)
+      else:
+        print("No New Notifications Received!")
+
+      sleep(delay)
 
 
 
 NLINK = environ["NLINK"]
 MONGO = environ["MONGO"]
+DBNAME = environ["DBNAME"]
+COLNAME = environ["COLNAME"]
 TOKEN = environ["TOKEN"]
-IDS = environ["IDS"].split(',')
+IDS = environ["IDS"]
 ADMIN = environ["ADMIN"]
 
-source = get_source(NLINK)
-soup = BeautifulSoup(source, 'html.parser')
-notifications = [(notification.find('a').getText().strip(), notification.find_all('td')[-1].getText().strip(), ("https://nitsri.ac.in/Pages/" if notification.find('a').get('href')[-4:].lower() == ".pdf" else "") + notification.find('a').get('href')) for notification in soup.find('table', {'id': 'customers'}).find_all('tr')[1:] if notification.find('a') is not None]
 
-client = MongoClient(MONGO)
-col = get_db(client)
 
-# init_db(col, notifications)
-
-while True:
-  source = get_source(NLINK)
-  soup = BeautifulSoup(source, 'html.parser')
-  notifications = [(notification.find('a').getText().strip(), notification.find_all('td')[-1].getText().strip(), ("https://nitsri.ac.in/Pages/" if notification.find('a').get('href')[-4:].lower() == ".pdf" else "") + notification.find('a').get('href')) for notification in soup.find('table', {'id': 'customers'}).find_all('tr')[1:] if notification.find('a') is not None]
-  new_notif = check_db(col, notifications)
-  if new_notif != []:
-    print("New Notification(s) Received!")
-    send_notif(new_notif)
-  else:
-    print("No New Notifications!")
-  sleep(15 * 60)
-
+notif = Notifications(NLINK, MONGO, DBNAME, COLNAME, TOKEN, IDS, ADMIN)
+notif.poll()

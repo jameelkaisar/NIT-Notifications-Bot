@@ -1,2 +1,2 @@
-beautifulsoup4==4.10.0
-pymongo[srv]==4.0.1
+beautifulsoup4==4.11.1
+pymongo[srv]==4.1.1

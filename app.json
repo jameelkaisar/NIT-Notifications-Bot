@@ -8,20 +8,26 @@
     }
   ],
   "env": {
-    "TOKEN": {
-      "description": "Telegram Bot Token"
+    "NLINK": {
+      "description": "Notifications Page Link"
     },
     "MONGO": {
       "description": "MongoDB Driver Code"
+    },
+    "DBNAME": {
+      "description": "MongoDB Database Name"
+    },
+    "COLNAME": {
+      "description": "MongoDB Collection Name"
+    },
+    "TOKEN": {
+      "description": "Telegram Bot Token"
     },
     "IDS": {
       "description": "Comma-seperated IDs"
     },
     "ADMIN": {
       "description": "Telegram ID of Admin"
-    },
-    "NLINK": {
-      "description": "Notifications Page Link"
     }
   }
 }
