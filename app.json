@@ -2,6 +2,7 @@
   "name": "nit-notifications-bot",
   "description": "NIT Notifications Bot",
   "repository": "https://github.com/JameelKaisar/NIT-Notifications-Bot",
+  "stack": "heroku-22",
   "buildpacks": [
     {
       "url": "heroku/python"
