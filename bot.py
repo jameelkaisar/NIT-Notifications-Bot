@@ -42,7 +42,7 @@ class Notifications():
         date = None
       title = row.find_all('td')[0].getText().strip().replace(u'\xa0', ' ')
       links = row.find_all('a')
-      links = list(filter(lambda x: x.getText().strip() != "", links))
+      links = list(filter(lambda x: x.getText().strip() != "" and len(x.find_all('a')) == 0, links))
       if (title != "" and len(links) != 0):
         link = links[0].get('href').strip()
         link = urljoin(NLINK, link)
